@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Todo List</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font and base styling */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7fafc;
+        }
+        .container-shadow {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 5px 15px -5px rgba(0, 0, 0, 0.04);
+        }
+        /* Custom scrollbar for task list */
+        #taskList::-webkit-scrollbar {
+            width: 8px;
+        }
+        #taskList::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div id="appContainer" class="w-full max-w-lg bg-white rounded-xl container-shadow p-6 transition-all duration-300">
+        <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">My Real-Time Tasks</h1>
+
+        <!-- User ID Display -->
+        <div class="bg-indigo-50 p-3 rounded-lg text-sm text-indigo-700 mb-6">
+            <p class="font-semibold mb-1">Your User ID:</p>
+            <p id="userIdDisplay" class="truncate font-mono text-xs"></p>
+        </div>
+
+        <!-- Add New Task Form -->
+        <div class="flex space-x-2 mb-6">
+            <input
+                type="text"
+                id="taskInput"
+                placeholder="What needs to be done?"
+                class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition-shadow"
+            >
+            <button
+                id="addTaskButton"
+                onclick="addTask()"
+                class="bg-indigo-600 text-white p-3 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 active:scale-[0.98]"
+                disabled
+            >
+                Add
+            </button>
+        </div>
+
+        <!-- Task List -->
+        <div id="taskList" class="space-y-3 max-h-96 overflow-y-auto">
+            <p id="loadingMessage" class="text-center text-gray-500">Initializing Firebase and loading tasks...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="hidden text-center p-8 border-2 border-dashed border-gray-200 rounded-xl mt-6">
+            <svg class="w-10 h-10 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-9 0V3h4v2m-4 0h4"></path></svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">No tasks yet!</h3>
+            <p class="mt-1 text-sm text-gray-500">Get started by adding a new task above.</p>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports (must be type="module") -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // IMPORTANT: Global variables are provided by the canvas environment
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let currentUserId = null;
+        let tasksCollectionRef;
+        let isAuthReady = false;
+
+        // Make functions globally accessible
+        window.addTask = addTask;
+        window.toggleTask = toggleTask;
+        window.deleteTask = deleteTask;
+
+        // Utility to convert base64 to ArrayBuffer for custom token signing
+        const base64ToArrayBuffer = (base64) => {
+            const binary_string = window.atob(base64);
+            const len = binary_string.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary_string.charCodeAt(i);
+            }
+            return bytes.buffer;
+        };
+
+        async function firebaseSetup() {
+            try {
+                // setLogLevel('debug'); // Uncomment for detailed console logging
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Authenticate user
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        document.getElementById('userIdDisplay').textContent = currentUserId;
+                        
+                        // Define the collection path for private user data
+                        const collectionPath = `/artifacts/${appId}/users/${currentUserId}/tasks`;
+                        tasksCollectionRef = collection(db, collectionPath);
+                        
+                        document.getElementById('loadingMessage').textContent = 'Loading tasks...';
+                        document.getElementById('addTaskButton').disabled = false;
+                        
+                        isAuthReady = true;
+                        listenForTasks();
+                    } else {
+                        // This should ideally not happen after signInWithCustomToken/signInAnonymously
+                        console.error("User is not signed in.");
+                        document.getElementById('loadingMessage').textContent = 'Failed to authenticate.';
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase Initialization or Auth Error:", error);
+                document.getElementById('loadingMessage').textContent = `Initialization Failed: ${error.message}`;
+            }
+        }
+
+        function listenForTasks() {
+            if (!tasksCollectionRef || !isAuthReady) {
+                console.warn("Firestore collection not ready.");
+                return;
+            }
+
+            // Create a query and listen for real-time updates
+            const q = query(tasksCollectionRef);
+
+            onSnapshot(q, (snapshot) => {
+                const tasks = [];
+                snapshot.forEach((doc) => {
+                    tasks.push({ id: doc.id, ...doc.data() });
+                });
+                // Sort tasks: incomplete first, then by creation time (optional, but good practice)
+                tasks.sort((a, b) => {
+                    if (a.completed !== b.completed) {
+                        return a.completed ? 1 : -1; // Incomplete (false) comes first
+                    }
+                    // Optional: secondary sort by createdAt if available, otherwise no secondary sort
+                    return 0;
+                });
+                renderTasks(tasks);
+            }, (error) => {
+                console.error("Error listening to tasks:", error);
+                document.getElementById('loadingMessage').textContent = 'Error loading tasks.';
+            });
+        }
+
+        function renderTasks(tasks) {
+            const taskList = document.getElementById('taskList');
+            const loadingMessage = document.getElementById('loadingMessage');
+            const emptyState = document.getElementById('emptyState');
+            
+            loadingMessage.classList.add('hidden');
+            taskList.innerHTML = '';
+
+            if (tasks.length === 0) {
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                tasks.forEach(task => {
+                    const taskItem = document.createElement('div');
+                    taskItem.className = `flex items-center p-4 rounded-lg transition duration-150 ${task.completed ? 'bg-green-50' : 'bg-gray-50'} hover:shadow-md`;
+                    taskItem.innerHTML = `
+                        <input
+                            type="checkbox"
+                            ${task.completed ? 'checked' : ''}
+                            onchange="toggleTask('${task.id}', ${task.completed})"
+                            class="w-5 h-5 text-indigo-600 bg-white border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"
+                        >
+                        <span class="flex-grow ml-3 text-gray-800 ${task.completed ? 'line-through text-gray-500 italic' : 'font-medium'}">
+                            ${task.text}
+                        </span>
+                        <button
+                            onclick="deleteTask('${task.id}')"
+                            class="text-gray-400 hover:text-red-600 transition duration-150 p-2 rounded-full hover:bg-red-100"
+                        >
+                            <!-- Delete Icon (Lucide X) -->
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    `;
+                    taskList.appendChild(taskItem);
+                });
+            }
+        }
+
+        async function addTask() {
+            const input = document.getElementById('taskInput');
+            const text = input.value.trim();
+
+            if (text === "" || !tasksCollectionRef) {
+                return;
+            }
+
+            const newTask = {
+                text: text,
+                completed: false,
+                createdAt: new Date().getTime()
+            };
+
+            try {
+                // Add a new document to the collection
+                await addDoc(tasksCollectionRef, newTask);
+                input.value = ''; // Clear input on success
+            } catch (e) {
+                console.error("Error adding document: ", e);
+                // Optionally show a user message here instead of console.error
+            }
+        }
+
+        async function toggleTask(id, currentCompletedStatus) {
+            if (!tasksCollectionRef) return;
+            const taskDocRef = doc(db, tasksCollectionRef.path, id);
+            try {
+                // Update the document to toggle the completed status
+                await updateDoc(taskDocRef, {
+                    completed: !currentCompletedStatus
+                });
+            } catch (e) {
+                console.error("Error updating document: ", e);
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!tasksCollectionRef) return;
+            const taskDocRef = doc(db, tasksCollectionRef.path, id);
+            try {
+                // Delete the document
+                await deleteDoc(taskDocRef);
+            } catch (e) {
+                console.error("Error deleting document: ", e);
+            }
+        }
+        
+        // Start the application setup
+        firebaseSetup();
+    </script>
+</body>
+</html>
