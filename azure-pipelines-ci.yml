@@ -1,0 +1,49 @@
+trigger:
+  branches:
+    include:
+      - dev
+      - stage
+      - main
+      - feature/*
+
+resources:
+  repositories:
+    - repository: self
+
+extends:
+  template: azure-pipelines-variables.yml
+
+pool:
+  name: Default  # your win-agent-01 is under 'Default' pool
+
+steps:
+  - task: Checkout@1
+    displayName: 'Checkout Source Code'
+
+  - task: AzureCLI@2
+    displayName: 'Login to Azure and Get ACR Credentials'
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        echo "Fetching ACR login server..."
+        ACR_NAME=$(az acr list --query "[0].name" -o tsv)
+        echo "##vso[task.setvariable variable=acrName]$ACR_NAME"
+        ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+        echo "##vso[task.setvariable variable=acrLoginServer]$ACR_LOGIN_SERVER"
+
+  - task: Docker@2
+    displayName: 'Build and Push Docker Image to ACR'
+    inputs:
+      containerRegistry: $(azureServiceConnection)
+      repository: $(imageName)
+      command: 'buildAndPush'
+      Dockerfile: '$(appPath)/Dockerfile'
+      buildContext: '$(appPath)'
+      tags: |
+        $(tag)
+
+  - publish: $(Pipeline.Workspace)
+    artifact: drop
+    displayName: 'Publish Build Artifact'

@@ -1,0 +1,22 @@
+# azure-pipelines-variables.yml
+variables:
+  # Service connection name from Azure DevOps
+  azureServiceConnection: 'AzureDevops-NonProd-DS-AI-Pipeline'
+
+  # Container registry image name
+  imageName: 'todoapp'
+
+  # Default resource group (environment will add suffix)
+  baseResourceGroup: 'rg-todoapp'
+
+  # Docker image tag
+  tag: 'latest'
+
+  # Default location
+  location: 'East US'
+
+  # App folder path
+  appPath: 'app'
+
+  # Infra folder path
+  infraPath: 'infra'

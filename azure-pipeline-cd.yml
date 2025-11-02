@@ -1,0 +1,56 @@
+trigger: none
+
+parameters:
+  - name: envType
+    displayName: 'Select Environment'
+    type: string
+    default: 'dev'
+    values:
+      - dev
+      - stage
+      - prod
+
+resources:
+  repositories:
+    - repository: self
+
+extends:
+  template: azure-pipelines-variables.yml
+
+pool:
+  name: Default
+
+steps:
+  - task: Checkout@1
+    displayName: 'Checkout Code'
+
+  # Deploy infrastructure (Bicep)
+  - task: AzureCLI@2
+    displayName: 'Deploy Infrastructure via Bicep'
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        echo "Deploying infrastructure for environment: ${{ parameters.envType }}"
+        az deployment sub create \
+          --location "$(location)" \
+          --template-file "$(infraPath)/main.bicep" \
+          --parameters "$(infraPath)/parameters/${{ parameters.envType }}.bicepparam"
+
+  # Deploy web app with container image
+  - task: AzureCLI@2
+    displayName: 'Update Web App with latest image'
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        ACR_LOGIN_SERVER=$(az acr show --name $(acrName) --query loginServer -o tsv)
+        WEBAPP_NAME="webapp-${{ parameters.envType }}-todoapp"
+        echo "Updating web app $WEBAPP_NAME with latest image..."
+        az webapp config container set \
+          --name $WEBAPP_NAME \
+          --resource-group rg-${{ parameters.envType }}-todoapp \
+          --docker-custom-image-name $ACR_LOGIN_SERVER/$(imageName):$(tag) \
+          --docker-registry-server-url https://$ACR_LOGIN_SERVER

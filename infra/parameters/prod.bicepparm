@@ -1,0 +1,8 @@
+using '../main.bicep'
+
+param environment = 'prod'
+param location = 'Central India'
+param rgName = 'rg-prod-todoapp'
+param acrName = 'acrprodtodoapp001'
+param webAppName = 'webapp-prod-todoapp'
+param imageName = 'todoapp'
